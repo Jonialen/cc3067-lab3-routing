@@ -1,0 +1,14 @@
+{
+  "type": "names",
+  "config": {
+    "A": "node-a:5000",
+    "B": "node-b:5000",
+    "C": "node-c:5000",
+    "D": "node-d:5000",
+    "E": "node-e:5000",
+    "F": "node-f:5000",
+    "G": "node-g:5000",
+    "H": "node-h:5000",
+    "I": "node-i:5000"
+  }
+}

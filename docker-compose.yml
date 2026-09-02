@@ -1,0 +1,169 @@
+# Nine routers, one container each, on a private bridge network.
+#
+# Each node listens on port 5000 inside its own container and resolves its
+# neighbours by service name, so there is no host port bookkeeping and the
+# topology file is the only place adjacency is declared.
+#
+#   MODE=lsr docker compose up -d          bring the network up
+#   docker attach lab3-node-a              open node A's console
+#   docker compose stop node-f             simulate a router going down
+#
+# Detach from an attached console with Ctrl-P Ctrl-Q; Ctrl-C would stop the node.
+
+x-node: &node
+  build: .
+  image: cc3067-lab3:latest
+  networks: [lab3]
+  # The node opens an interactive console on stdin, so the container needs a
+  # TTY kept open even while nobody is attached.
+  stdin_open: true
+  tty: true
+
+services:
+  node-a:
+    <<: *node
+    container_name: lab3-node-a
+    hostname: node-a
+    command:
+      - --id
+      - "A"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-b:
+    <<: *node
+    container_name: lab3-node-b
+    hostname: node-b
+    command:
+      - --id
+      - "B"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-c:
+    <<: *node
+    container_name: lab3-node-c
+    hostname: node-c
+    command:
+      - --id
+      - "C"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-d:
+    <<: *node
+    container_name: lab3-node-d
+    hostname: node-d
+    command:
+      - --id
+      - "D"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-e:
+    <<: *node
+    container_name: lab3-node-e
+    hostname: node-e
+    command:
+      - --id
+      - "E"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-f:
+    <<: *node
+    container_name: lab3-node-f
+    hostname: node-f
+    command:
+      - --id
+      - "F"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-g:
+    <<: *node
+    container_name: lab3-node-g
+    hostname: node-g
+    command:
+      - --id
+      - "G"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-h:
+    <<: *node
+    container_name: lab3-node-h
+    hostname: node-h
+    command:
+      - --id
+      - "H"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+  node-i:
+    <<: *node
+    container_name: lab3-node-i
+    hostname: node-i
+    command:
+      - --id
+      - "I"
+      - --mode
+      - ${MODE:-lsr}
+      - --listen
+      - 0.0.0.0:5000
+      - --topo
+      - configs/topo-default.json
+      - --names
+      - configs/names-docker.json
+
+networks:
+  lab3:
+    driver: bridge
