@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/uvg/cc3067-lab3/internal/protocol"
@@ -41,12 +42,29 @@ func (n *Node) discoveryLoop(ctx context.Context) {
 	}
 }
 
+// nowSeconds is the sender's timestamp format required by the protocol:
+// fractional Unix seconds, so a t0 header round-trips without needing the
+// two clocks involved to be synchronised.
+func nowSeconds() float64 {
+	return float64(time.Now().UnixNano()) / 1e9
+}
+
+// helloPayload builds the object every hello/echo carries, per the protocol.
+func (n *Node) helloPayload() protocol.HelloPayload {
+	port, _ := strconv.Atoi(n.selfPort)
+	return protocol.HelloPayload{ListenPort: port}
+}
+
 // probeAll sends a hello to every configured neighbour.
 func (n *Node) probeAll() {
 	for _, neighbor := range n.configuredNeighbors() {
-		pkt := protocol.New(n.alg.Proto(), protocol.TypeHello, n.id, neighbor, "")
-		pkt.SetHeader(protocol.HeaderSentAt, time.Now().UnixNano())
-		pkt.SetHeader(protocol.HeaderHop, n.id)
+		pkt, err := protocol.NewObject(n.alg.Proto(), protocol.TypeHello, n.selfAddr, n.Address(neighbor), n.helloPayload())
+		if err != nil {
+			n.Logf("cannot build hello for %s: %v", neighbor, err)
+			continue
+		}
+		pkt.SetHeader(protocol.HeaderT0, nowSeconds())
+		pkt.SetHeader(protocol.HeaderVia, n.selfAddr)
 
 		if err := n.SendTo(neighbor, pkt); err != nil {
 			// An unreachable neighbour is expected while the network is coming
@@ -62,15 +80,20 @@ func (n *Node) probeAll() {
 // timestamp back, so the sender can measure the round trip without keeping
 // any per-probe state of its own.
 func (n *Node) handleHello(pkt *protocol.Packet) {
-	n.markAlive(pkt.From)
+	from := n.LocalID(pkt.From)
+	n.markAlive(from)
 
-	reply := protocol.New(n.alg.Proto(), protocol.TypeEcho, n.id, pkt.From, "")
-	if sentAt, ok := pkt.HeaderFloat(protocol.HeaderSentAt); ok {
-		reply.SetHeader(protocol.HeaderSentAt, sentAt)
+	reply, err := protocol.NewObject(n.alg.Proto(), protocol.TypeEcho, n.selfAddr, pkt.From, n.helloPayload())
+	if err != nil {
+		n.Logf("cannot build echo for %s: %v", pkt.From, err)
+		return
 	}
-	reply.SetHeader(protocol.HeaderHop, n.id)
+	if t0, ok := pkt.HeaderFloat(protocol.HeaderT0); ok {
+		reply.SetHeader(protocol.HeaderT0, t0)
+	}
+	reply.SetHeader(protocol.HeaderVia, n.selfAddr)
 
-	if err := n.SendTo(pkt.From, reply); err != nil && n.verbose {
+	if err := n.SendTo(from, reply); err != nil && n.verbose {
 		n.Logf("echo to %s failed: %v", pkt.From, err)
 	}
 }
@@ -79,15 +102,16 @@ func (n *Node) handleHello(pkt *protocol.Packet) {
 // routing algorithm.
 func (n *Node) handleEcho(pkt *protocol.Packet) {
 	cost := minCost
-	if sentAt, ok := pkt.HeaderFloat(protocol.HeaderSentAt); ok {
-		// The cost of a link is half the round trip: the one-way delay.
-		rtt := float64(time.Now().UnixNano()) - sentAt
-		cost = rtt / 2 / float64(time.Millisecond)
+	if t0, ok := pkt.HeaderFloat(protocol.HeaderT0); ok {
+		// The cost of a link is half the round trip: the one-way delay, in
+		// milliseconds.
+		rttSeconds := nowSeconds() - t0
+		cost = rttSeconds * 1000 / 2
 	}
 	if cost < minCost {
 		cost = minCost
 	}
-	n.markAliveWithCost(pkt.From, cost)
+	n.markAliveWithCost(n.LocalID(pkt.From), cost)
 }
 
 // markAlive refreshes a neighbour's liveness without changing its cost. It is

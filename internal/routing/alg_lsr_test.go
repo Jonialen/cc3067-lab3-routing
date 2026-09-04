@@ -8,6 +8,8 @@ import (
 )
 
 // fakeFabric records what an algorithm sends without touching the network.
+// It has no real name table, so Address and LocalID are the identity
+// function: ids and wire addresses are the same strings in these tests.
 type fakeFabric struct {
 	id string
 
@@ -33,6 +35,9 @@ func (f *fakeFabric) SendTo(neighbor string, pkt *protocol.Packet) error {
 
 func (f *fakeFabric) Logf(string, ...any) {}
 
+func (f *fakeFabric) Address(id string) string   { return id }
+func (f *fakeFabric) LocalID(addr string) string { return addr }
+
 // announcements counts the distinct link-state packets this fabric emitted for
 // origin, ignoring the copies flooding sends to each neighbour.
 func (f *fakeFabric) announcements(t *testing.T, origin string) int {
@@ -45,7 +50,7 @@ func (f *fakeFabric) announcements(t *testing.T, origin string) int {
 		if pkt.Type != protocol.TypeInfo {
 			continue
 		}
-		lsp, err := protocol.DecodeLSP(pkt.Payload)
+		lsp, err := protocol.DecodeLSPFlexible(pkt.Payload)
 		if err != nil {
 			t.Fatalf("emitted an unreadable link-state packet: %v", err)
 		}
@@ -54,6 +59,17 @@ func (f *fakeFabric) announcements(t *testing.T, origin string) int {
 		}
 	}
 	return len(seen)
+}
+
+// infoPacket builds an "info" packet carrying lsp, as HandleInfo expects to
+// receive it off the wire.
+func infoPacket(t *testing.T, from string, lsp protocol.LinkStatePacket) *protocol.Packet {
+	t.Helper()
+	pkt, err := protocol.NewObject(protocol.ProtoLSR, protocol.TypeInfo, from, "*", lsp)
+	if err != nil {
+		t.Fatalf("NewObject returned %v", err)
+	}
+	return pkt
 }
 
 func TestLSRAnnouncesANewNeighbourImmediately(t *testing.T) {
@@ -107,15 +123,14 @@ func TestLSRBuildsItsTableFromTheLinkStateDatabase(t *testing.T) {
 	lsr := NewLSR(fabric)
 	lsr.OnLinkUp("B", 1)
 
-	payload, err := protocol.EncodeLSP(protocol.LinkStatePacket{
-		Origin:    "B",
-		Seq:       1,
-		Neighbors: map[string]float64{"A": 1, "C": 1},
-	})
-	if err != nil {
-		t.Fatalf("EncodeLSP returned %v", err)
-	}
-	lsr.HandleInfo(protocol.New(protocol.ProtoLSR, protocol.TypeInfo, "B", "*", payload))
+	lsr.HandleInfo(infoPacket(t, "B", protocol.LinkStatePacket{
+		Origin: "B",
+		Seq:    1,
+		Neighbors: []protocol.NeighborEntry{
+			{ID: "A", Weight: 1},
+			{ID: "C", Weight: 1},
+		},
+	}))
 
 	route, ok := lsr.Table()["C"]
 	if !ok {
@@ -132,23 +147,40 @@ func TestLSRIgnoresAStaleAnnouncement(t *testing.T) {
 	fabric := &fakeFabric{id: "A", neighbors: []string{"B"}}
 	lsr := NewLSR(fabric)
 
-	fresh, err := protocol.EncodeLSP(protocol.LinkStatePacket{
-		Origin: "B", Seq: 5, Neighbors: map[string]float64{"A": 1, "C": 1},
+	fresh := infoPacket(t, "B", protocol.LinkStatePacket{
+		Origin: "B", Seq: 5,
+		Neighbors: []protocol.NeighborEntry{{ID: "A", Weight: 1}, {ID: "C", Weight: 1}},
 	})
-	if err != nil {
-		t.Fatalf("EncodeLSP returned %v", err)
-	}
-	stale, err := protocol.EncodeLSP(protocol.LinkStatePacket{
-		Origin: "B", Seq: 2, Neighbors: map[string]float64{"A": 1},
+	stale := infoPacket(t, "B", protocol.LinkStatePacket{
+		Origin: "B", Seq: 2,
+		Neighbors: []protocol.NeighborEntry{{ID: "A", Weight: 1}},
 	})
-	if err != nil {
-		t.Fatalf("EncodeLSP returned %v", err)
-	}
 
-	lsr.HandleInfo(protocol.New(protocol.ProtoLSR, protocol.TypeInfo, "B", "*", fresh))
-	lsr.HandleInfo(protocol.New(protocol.ProtoLSR, protocol.TypeInfo, "B", "*", stale))
+	lsr.HandleInfo(fresh)
+	lsr.HandleInfo(stale)
 
 	if got := lsr.Database()["B"].Seq; got != 5 {
 		t.Errorf("stored sequence for B = %d, want 5; a stale announcement overwrote it", got)
+	}
+}
+
+func TestLSRAcceptsARestartedOriginDespiteALowerSequence(t *testing.T) {
+	// A node that restarts resets its own sequence counter to a low number.
+	// The rest of the network must not keep ignoring it just because it once
+	// held a much higher one.
+	fabric := &fakeFabric{id: "A", neighbors: []string{"B"}}
+	lsr := NewLSR(fabric)
+
+	lsr.HandleInfo(infoPacket(t, "C", protocol.LinkStatePacket{
+		Origin: "C", Seq: 40,
+		Neighbors: []protocol.NeighborEntry{{ID: "B", Weight: 1}},
+	}))
+	lsr.HandleInfo(infoPacket(t, "C", protocol.LinkStatePacket{
+		Origin: "C", Seq: 1,
+		Neighbors: []protocol.NeighborEntry{{ID: "B", Weight: 1}},
+	}))
+
+	if got := lsr.Database()["C"].Seq; got != 1 {
+		t.Errorf("stored sequence for restarted C = %d, want 1", got)
 	}
 }

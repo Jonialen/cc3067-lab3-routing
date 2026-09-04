@@ -131,46 +131,55 @@ another team can address this node by raw IP without appearing in our table.
 
 ## Wire protocol
 
-One JSON object per line over TCP. Newline framing means a node can be
-inspected with nothing more than `nc`.
+One JSON object per line over TCP (NDJSON), UTF-8, max 65536 bytes per line.
+Newline framing means a node can be inspected with nothing more than `nc`.
+This is the format the class agreed on, so it interoperates with every other
+team's implementation regardless of language.
 
 ```json
 {
+  "version": 1,
   "proto": "lsr",
   "type": "message",
-  "from": "A",
-  "to": "I",
-  "ttl": 8,
-  "headers": [{ "msg_id": "3f2a..." }, { "hop": "C" }, { "path": "A>C>F" }],
+  "from": "10.0.0.1:5000",
+  "to": "10.0.0.7:5000",
+  "ttl": 16,
+  "headers": [{ "msg_id": "3f2a..." }, { "checksum": "0bded535" }, { "trace": ["10.0.0.1:5000"] }],
   "payload": "hola"
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
+| `version` | envelope version, currently `1`; a mismatch is logged, never a reason to drop a packet |
 | `proto` | algorithm that produced the packet |
 | `type` | `message`, `hello`, `echo` or `info` |
-| `from` / `to` | origin and final destination (`*` broadcasts an LSP) |
-| `ttl` | hop budget; the packet is dropped at zero |
+| `from` / `to` | `IP:puerto` of the originator and final destination (`*` broadcasts an LSP); a port-less address completes with the network's configured port |
+| `ttl` | hop budget, starts at 16; the packet is dropped at zero |
 | `headers` | array of single-entry objects, per the agreed format |
-| `payload` | user text, or a JSON-encoded link-state packet for `info` |
+| `payload` | **string** for `message`; **object** for `hello`, `echo` and `info` |
 
 Headers we rely on — unknown headers from other teams are preserved when a
 packet is forwarded:
 
 | Header | Purpose |
 | --- | --- |
-| `msg_id` | duplicate suppression |
-| `hop` | previous node, so flooding never bounces a packet back |
-| `sent_at` | timestamp in nanoseconds, for `hello`/`echo` link measurement |
-| `path` | trace of the nodes traversed |
+| `msg_id` | duplicate suppression; derived deterministically from `(from,to,type,payload)` when a peer omits it |
+| `checksum` | CRC32 (hex, 8 digits) of the canonical payload; a mismatch is logged, never dropped |
+| `via` | address of the previous hop, so flooding never bounces a packet back |
+| `t0` | sender's timestamp, fractional Unix seconds, for `hello`/`echo` link measurement |
+| `trace` | addresses the packet has traversed |
 
 Packet types:
 
-- `hello` — probe a neighbour; the receiver answers with `echo`.
-- `echo` — carries the original `sent_at` back, so the prober measures the
-  round trip without keeping per-probe state.
-- `info` — a link-state packet, flooded across the network.
+- `hello` — probe a neighbour, payload `{"listen_port": 5000}`; the receiver answers with `echo`.
+- `echo` — carries the original `t0` back, so the prober measures the round
+  trip without keeping per-probe state.
+- `info` — a link-state packet, flooded across the network. Payload:
+  `{"origin": "...", "seq": 7, "age_s": 0, "neighbors": [{"id": "...", "weight": 4.8}]}`.
+  Identity is `(origin, seq)`: only a strictly higher `seq` is stored and
+  re-flooded, except when it falls far enough below the one on file (16 or
+  more) to signal a restarted origin rather than a stale duplicate.
 - `message` — user data, forwarded to its destination or printed on arrival.
 
 ## Architecture
@@ -204,7 +213,7 @@ as pure functions with no knowledge of sockets:
 
 ```go
 func Dijkstra(g Graph, source string) Table
-func Flood(neighbors []string, pkt *protocol.Packet) []string
+func Flood(neighbors []string, previousHop string) []string
 ```
 
 `LSRAlgorithm` calls `Flood` to disseminate link-state packets and `Dijkstra`
@@ -250,9 +259,9 @@ Two mechanisms keep it bounded:
    announced only when it moved past a threshold, and never more often than
    the rate limit; the periodic refresh carries it otherwise.
 
-Measured on the nine-node Docker network, this is the difference between
-sequence numbers reaching 85 in one minute and reaching 11 in ninety
-seconds — the latter being exactly the designed 8-second refresh and nothing
+Without these, sequence numbers on a nine-node network climb every few seconds
+from jitter alone; with them, an origin's sequence number advances only on the
+10-second periodic refresh (`lspInterval`) plus real topology changes — nothing
 more.
 
 ## Tests
