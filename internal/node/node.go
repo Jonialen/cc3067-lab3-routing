@@ -14,7 +14,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +90,17 @@ type Node struct {
 	names   *config.Names
 	verbose bool
 
+	// selfAddr is this node's own address, as it must appear in the "from" of
+	// every packet it originates. It is the address declared for our id in
+	// the name table when there is one, so a node bound with --listen on a
+	// permissive address (e.g. 0.0.0.0:5000) still advertises the real
+	// address other teams can dial back.
+	selfAddr string
+	// selfPort completes an address that arrives without one, per the
+	// protocol's "a port-less address takes the network's configured port"
+	// rule.
+	selfPort string
+
 	server *transport.Server
 	client *transport.Client
 	logger *log.Logger
@@ -118,11 +131,22 @@ func New(opts Options) (*Node, error) {
 		listen = addr
 	}
 
+	selfAddr := listen
+	if addr, ok := opts.Names.Endpoint(opts.ID); ok {
+		selfAddr = addr
+	}
+	_, selfPort, err := net.SplitHostPort(selfAddr)
+	if err != nil {
+		selfPort = ""
+	}
+
 	n := &Node{
 		id:        opts.ID,
 		mode:      opts.Mode,
 		names:     opts.Names,
 		verbose:   opts.Verbose,
+		selfAddr:  selfAddr,
+		selfPort:  selfPort,
 		client:    transport.NewClient(),
 		logger:    log.New(os.Stdout, fmt.Sprintf("[%s] ", opts.ID), log.Ltime),
 		inbox:     make(chan *protocol.Packet, inboxSize),
@@ -218,19 +242,35 @@ func (n *Node) handle(pkt *protocol.Packet) {
 	if n.verbose {
 		n.Logf("recv %s", pkt)
 	}
+	if pkt.Version != protocol.Version {
+		n.Logf("packet from %s declares version %d, expected %d; processing anyway", pkt.From, pkt.Version, protocol.Version)
+	}
+	if !pkt.ChecksumValid() {
+		n.Logf("checksum mismatch on %s from %s, processing anyway", pkt.Type, pkt.From)
+	}
 	switch pkt.Type {
 	case protocol.TypeHello:
 		n.handleHello(pkt)
 	case protocol.TypeEcho:
 		n.handleEcho(pkt)
 	case protocol.TypeInfo:
-		n.markAlive(pkt.HeaderString(protocol.HeaderHop))
+		n.markAlive(previousHopID(n, pkt))
 		n.alg.HandleInfo(pkt)
 	case protocol.TypeMessage:
 		n.handleMessage(pkt)
 	default:
 		n.Logf("unknown packet type %q from %s, ignoring", pkt.Type, pkt.From)
 	}
+}
+
+// previousHopID resolves the address recorded in a packet's "via" header (or
+// "from", for a packet still on its first hop) into a local id.
+func previousHopID(n *Node, pkt *protocol.Packet) string {
+	via := pkt.HeaderString(protocol.HeaderVia)
+	if via == "" {
+		via = pkt.From
+	}
+	return n.LocalID(via)
 }
 
 // handleMessage delivers user data locally or forwards it onward.
@@ -245,9 +285,14 @@ func (n *Node) handleMessage(pkt *protocol.Packet) {
 		return
 	}
 
-	if pkt.To == n.id {
-		n.Logf("MESSAGE from %s (path %s): %s",
-			pkt.From, pkt.HeaderString(protocol.HeaderPath), pkt.Payload)
+	if n.LocalID(pkt.To) == n.id {
+		text, err := pkt.PayloadText()
+		if err != nil {
+			n.Logf("MESSAGE from %s carries an unreadable payload: %v", pkt.From, err)
+			return
+		}
+		n.Logf("MESSAGE from %s (trace %s): %s",
+			pkt.From, strings.Join(pkt.Trace(), ">"), text)
 		if n.onDeliver != nil {
 			n.onDeliver(pkt)
 		}
@@ -269,8 +314,8 @@ func (n *Node) relay(pkt *protocol.Packet) {
 		n.Logf("ttl expired for %s, dropping", pkt)
 		return
 	}
-	pkt.AppendPath(n.id)
-	pkt.SetHeader(protocol.HeaderHop, n.id)
+	pkt.AppendTrace(n.selfAddr)
+	pkt.SetHeader(protocol.HeaderVia, n.selfAddr)
 
 	for _, target := range targets {
 		if err := n.SendTo(target, pkt.Clone()); err != nil {
@@ -284,9 +329,9 @@ func (n *Node) Send(to, text string) error {
 	if to == n.id {
 		return fmt.Errorf("%q is this node", to)
 	}
-	pkt := protocol.New(n.alg.Proto(), protocol.TypeMessage, n.id, to, text)
-	pkt.AppendPath(n.id)
-	pkt.SetHeader(protocol.HeaderHop, n.id)
+	pkt := protocol.NewText(n.alg.Proto(), protocol.TypeMessage, n.selfAddr, n.Address(to), text)
+	pkt.AppendTrace(n.selfAddr)
+	pkt.SetHeader(protocol.HeaderVia, n.selfAddr)
 	// Remember our own message so a flooded copy coming back is discarded.
 	n.seen.Seen(pkt.HeaderString(protocol.HeaderMsgID))
 
@@ -346,6 +391,29 @@ func (n *Node) SendTo(neighbor string, pkt *protocol.Packet) error {
 // Logf writes one line to the node console.
 func (n *Node) Logf(format string, args ...any) {
 	n.logger.Printf(format, args...)
+}
+
+// Address resolves a local id to the address it must be written as on the
+// wire. "*" (the link-state broadcast destination) and an id that is already
+// an address resolve to themselves.
+func (n *Node) Address(id string) string {
+	if id == "*" || id == n.id {
+		return n.selfAddr
+	}
+	if addr, ok := n.names.Endpoint(id); ok {
+		return addr
+	}
+	return id
+}
+
+// LocalID resolves a wire address back to the id this node knows it by. An
+// address naming no configured node resolves to itself, which is how a team
+// outside our name table is addressed, per the protocol.
+func (n *Node) LocalID(addr string) string {
+	if addr == "*" || addr == n.selfAddr {
+		return n.id
+	}
+	return n.names.IDFor(addr, n.selfPort)
 }
 
 // configuredNeighbors lists every neighbour from the topology, alive or not.

@@ -47,9 +47,10 @@ func (d *DijkstraAlgorithm) Start(ctx context.Context) {
 
 // Forward returns the single next hop towards the packet's destination.
 func (d *DijkstraAlgorithm) Forward(pkt *protocol.Packet) []string {
-	route, ok := d.table.Lookup(pkt.To)
+	dest := d.fabric.LocalID(pkt.To)
+	route, ok := d.table.Lookup(dest)
 	if !ok {
-		d.fabric.Logf("no route to %s, dropping %s", pkt.To, pkt)
+		d.fabric.Logf("no route to %s, dropping %s", dest, pkt)
 		return nil
 	}
 	return []string{route.NextHop}
@@ -89,6 +90,27 @@ func (d *DijkstraAlgorithm) OnLinkDown(neighbor string) {
 
 // Table exposes the current routes.
 func (d *DijkstraAlgorithm) Table() Table { return d.table.Snapshot() }
+
+// Topology exposes the configured graph, minus any link currently considered
+// down.
+func (d *DijkstraAlgorithm) Topology() []Edge {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	edges := make([]Edge, 0)
+	for from, links := range d.base {
+		if d.down[from] {
+			continue
+		}
+		for to, cost := range links {
+			if d.down[to] {
+				continue
+			}
+			edges = append(edges, Edge{From: from, To: to, Cost: cost})
+		}
+	}
+	return edges
+}
 
 // recompute rebuilds the shortest-path table from the configured topology
 // minus the links currently considered down.

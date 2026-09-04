@@ -129,3 +129,32 @@ func (n *Names) Endpoint(id string) (string, bool) {
 	}
 	return "", false
 }
+
+// IDFor resolves a wire address back to the id it is known by in this table.
+// An address missing a port is completed with fallbackPort first, so
+// "10.0.0.7" and "10.0.0.7:5000" resolve to the same id when 5000 is the
+// network's common port, per the protocol. An address matching no id resolves
+// to itself, which is what lets a node outside this table act as its own id.
+func (n *Names) IDFor(addr, fallbackPort string) string {
+	addr = completePort(addr, fallbackPort)
+	for id, a := range n.Config {
+		if a == addr {
+			return id
+		}
+	}
+	return addr
+}
+
+// completePort appends fallbackPort to addr when addr carries no port of its
+// own.
+func completePort(addr, fallbackPort string) string {
+	if fallbackPort == "" {
+		return addr
+	}
+	for i := range addr {
+		if addr[i] == ':' {
+			return addr
+		}
+	}
+	return addr + ":" + fallbackPort
+}

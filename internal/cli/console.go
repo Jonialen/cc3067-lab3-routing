@@ -78,6 +78,10 @@ func (c *Console) dispatch(line string) bool {
 		c.printNeighbors()
 	case "lsdb":
 		c.printDatabase()
+	case "topology", "graph":
+		c.printTopology()
+	case "dijkstra":
+		c.printDijkstra()
 	case "info":
 		fmt.Fprintf(c.out, "id=%s mode=%s\n", c.node.ID(), c.node.Mode())
 	case "help", "?":
@@ -155,12 +159,61 @@ func (c *Console) printDatabase() {
 	}
 }
 
+// printTopology dumps every link the algorithm currently knows about, with
+// its cost: the whole network graph for dijkstra and lsr, only our own direct
+// links for flooding.
+func (c *Console) printTopology() {
+	edges := c.node.Algorithm().Topology()
+	if len(edges) == 0 {
+		fmt.Fprintln(c.out, "(no topology known yet)")
+		return
+	}
+
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		return edges[i].To < edges[j].To
+	})
+
+	fmt.Fprintf(c.out, "%-16s %-16s %s\n", "ORIGEN", "DESTINO", "PESO")
+	for _, e := range edges {
+		fmt.Fprintf(c.out, "%-16s %-16s %.2f\n", e.From, e.To, e.Cost)
+	}
+}
+
+// printDijkstra runs Dijkstra explicitly over the topology this node
+// currently knows (the same edges "topology" shows) and prints the resulting
+// routes: destination, next hop and total cost. In lsr and dijkstra modes
+// this matches "table" exactly, since that is how those tables are built; the
+// point of a separate command is to make that computation visible on demand
+// and to give flooding a routes view too, limited to what it actually knows.
+func (c *Console) printDijkstra() {
+	graph := routing.NewGraph()
+	for _, e := range c.node.Algorithm().Topology() {
+		graph.AddEdge(e.From, e.To, e.Cost)
+	}
+
+	table := routing.Dijkstra(graph, c.node.ID())
+	if len(table) == 0 {
+		fmt.Fprintln(c.out, "(sin rutas: la topología conocida todavía no alcanza a nadie)")
+		return
+	}
+
+	fmt.Fprintf(c.out, "%-16s %-16s %s\n", "DESTINO", "NEXT HOP", "COSTO")
+	for _, r := range table.Sorted() {
+		fmt.Fprintf(c.out, "%-16s %-16s %.2f\n", r.Dest, r.NextHop, r.Cost)
+	}
+}
+
 func (c *Console) printHelp() {
 	fmt.Fprint(c.out, `commands:
   send <dest> <text>   send a user message through the network
   table                show the routing table
   neighbors            show direct links and their measured cost
   lsdb                 show the link-state database (lsr mode only)
+  topology             show every known link and its weight (alias: graph)
+  dijkstra             recompute and show routes: destino, next hop, costo
   info                 show this node's id and mode
   help                 show this text
   quit                 stop the node

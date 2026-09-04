@@ -9,17 +9,15 @@ import (
 	"github.com/uvg/cc3067-lab3/internal/protocol"
 )
 
-// Timings of the link-state protocol. They are deliberately short so that a
-// classroom demo converges while the audience is still watching.
+// Timings of the link-state protocol, as agreed for the class network.
 const (
 	// lspInterval is how often a node re-announces its own links, even when
 	// nothing changed. Periodic refresh is what lets other nodes age out the
 	// announcements of a node that died.
-	lspInterval = 8 * time.Second
+	lspInterval = 10 * time.Second
 	// lspMaxAge is how long a foreign announcement is trusted without being
-	// refreshed. It must be a comfortable multiple of lspInterval so that one
-	// lost packet does not evict a healthy node.
-	lspMaxAge = 25 * time.Second
+	// refreshed.
+	lspMaxAge = 30 * time.Second
 	// ageInterval is how often the database is swept for expired entries.
 	ageInterval = 3 * time.Second
 	// seenTTL is how long a flooded LSP identifier is remembered.
@@ -29,6 +27,10 @@ const (
 	// announced immediately; a cost that merely drifted can wait, because the
 	// periodic refresh will carry it anyway.
 	minAnnounceInterval = 5 * time.Second
+	// seqResetGap is how far below the last known sequence number a fresh one
+	// must fall before it is trusted as a restarted origin rather than a
+	// stale duplicate. See store.
+	seqResetGap = 16
 )
 
 // costChangeThreshold is how much a measured cost must move, as a fraction of
@@ -37,9 +39,18 @@ const (
 // and announcing it would only add traffic.
 const costChangeThreshold = 0.5
 
+// Announcement is one node's link-state record as kept in our database: the
+// origin and its neighbours, already resolved to the local id space, unlike
+// the wire LinkStatePacket, which names them by address.
+type Announcement struct {
+	Origin    string
+	Seq       int
+	Neighbors map[string]float64
+}
+
 // lsdbEntry is one announcement plus the moment it was last refreshed.
 type lsdbEntry struct {
-	lsp       protocol.LinkStatePacket
+	entry     Announcement
 	refreshed time.Time
 }
 
@@ -119,9 +130,10 @@ func (l *LSRAlgorithm) ageLoop(ctx context.Context) {
 
 // Forward returns the single next hop chosen by the computed shortest path.
 func (l *LSRAlgorithm) Forward(pkt *protocol.Packet) []string {
-	route, ok := l.table.Lookup(pkt.To)
+	dest := l.fabric.LocalID(pkt.To)
+	route, ok := l.table.Lookup(dest)
 	if !ok {
-		l.fabric.Logf("no route to %s yet, dropping %s", pkt.To, pkt)
+		l.fabric.Logf("no route to %s yet, dropping %s", dest, pkt)
 		return nil
 	}
 	return []string{route.NextHop}
@@ -136,17 +148,28 @@ func (l *LSRAlgorithm) HandleInfo(pkt *protocol.Packet) {
 		return
 	}
 
-	lsp, err := protocol.DecodeLSP(pkt.Payload)
+	if !pkt.ChecksumValid() {
+		l.fabric.Logf("checksum mismatch on link-state packet from %s, processing anyway", pkt.From)
+	}
+
+	lsp, err := protocol.DecodeLSPFlexible(pkt.Payload)
 	if err != nil {
 		l.fabric.Logf("discarding unreadable link-state packet from %s: %v", pkt.From, err)
 		return
 	}
-	if lsp.Origin == "" || lsp.Origin == l.fabric.ID() {
+
+	origin := l.fabric.LocalID(lsp.Origin)
+	if origin == "" || origin == l.fabric.ID() {
 		// Our own announcement came back around the ring; nothing to learn.
 		return
 	}
 
-	accepted, structural := l.store(lsp)
+	neighbors := make(map[string]float64, len(lsp.Neighbors))
+	for _, ne := range lsp.Neighbors {
+		neighbors[l.fabric.LocalID(ne.ID)] = ne.Weight
+	}
+
+	accepted, structural := l.store(origin, lsp.Seq, neighbors)
 	if !accepted {
 		// Already known or stale. Not re-flooding it is what terminates the
 		// flood; the sequence number is the authority, not the TTL.
@@ -156,7 +179,7 @@ func (l *LSRAlgorithm) HandleInfo(pkt *protocol.Packet) {
 	// Only a changed neighbour set is worth a console line. Announcements that
 	// merely carry refreshed costs would otherwise bury everything else.
 	if structural {
-		l.fabric.Logf("topology update: %s is linked to %v", lsp.Origin, neighborNames(lsp.Neighbors))
+		l.fabric.Logf("topology update: %s is linked to %v", origin, neighborNames(neighbors))
 	}
 	l.recompute()
 	l.relay(pkt)
@@ -208,14 +231,34 @@ func (l *LSRAlgorithm) OnLinkDown(neighbor string) {
 // Table exposes the current routes.
 func (l *LSRAlgorithm) Table() Table { return l.table.Snapshot() }
 
-// Database returns a copy of the link-state database, for the console.
-func (l *LSRAlgorithm) Database() map[string]protocol.LinkStatePacket {
+// Topology exposes the graph reconstructed from our own links plus every
+// announcement in the database — the same edges recompute uses to run
+// Dijkstra, so this is exactly the topology our routing table is based on.
+func (l *LSRAlgorithm) Topology() []Edge {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	out := make(map[string]protocol.LinkStatePacket, len(l.lsdb))
+	self := l.fabric.ID()
+	edges := make([]Edge, 0, len(l.links))
+	for neighbor, cost := range l.links {
+		edges = append(edges, Edge{From: self, To: neighbor, Cost: cost})
+	}
 	for origin, entry := range l.lsdb {
-		out[origin] = entry.lsp
+		for neighbor, cost := range entry.entry.Neighbors {
+			edges = append(edges, Edge{From: origin, To: neighbor, Cost: cost})
+		}
+	}
+	return edges
+}
+
+// Database returns a copy of the link-state database, for the console.
+func (l *LSRAlgorithm) Database() map[string]Announcement {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	out := make(map[string]Announcement, len(l.lsdb))
+	for origin, entry := range l.lsdb {
+		out[origin] = entry.entry
 	}
 	return out
 }
@@ -225,34 +268,35 @@ func (l *LSRAlgorithm) announce() {
 	l.mu.Lock()
 	l.seq++
 	l.lastAnnounce = time.Now()
-	lsp := protocol.LinkStatePacket{
-		Origin:    l.fabric.ID(),
-		Seq:       l.seq,
-		Neighbors: make(map[string]float64, len(l.links)),
-	}
+	neighbors := make([]protocol.NeighborEntry, 0, len(l.links))
 	for neighbor, cost := range l.links {
-		lsp.Neighbors[neighbor] = cost
+		neighbors = append(neighbors, protocol.NeighborEntry{ID: l.fabric.Address(neighbor), Weight: cost})
+	}
+	lsp := protocol.LinkStatePacket{
+		Origin:    l.fabric.Address(l.fabric.ID()),
+		Seq:       l.seq,
+		AgeS:      0,
+		Neighbors: neighbors,
 	}
 	l.mu.Unlock()
 
-	payload, err := protocol.EncodeLSP(lsp)
+	// "to" is broadcast: a link-state packet has no single destination, it is
+	// addressed to every node that will listen.
+	pkt, err := protocol.NewObject(protocol.ProtoLSR, protocol.TypeInfo, l.fabric.Address(l.fabric.ID()), "*", lsp)
 	if err != nil {
 		l.fabric.Logf("cannot encode own link-state packet: %v", err)
 		return
 	}
-
-	// "to" is broadcast: a link-state packet has no single destination, it is
-	// addressed to every node that will listen.
-	pkt := protocol.New(protocol.ProtoLSR, protocol.TypeInfo, l.fabric.ID(), "*", payload)
 	l.seen.Seen(pkt.HeaderString(protocol.HeaderMsgID))
 	l.relay(pkt)
 }
 
 // relay pushes an info packet onward using the shared flooding primitive.
 func (l *LSRAlgorithm) relay(pkt *protocol.Packet) {
-	for _, neighbor := range Flood(l.fabric.Neighbors(), pkt) {
+	previousHop := previousHopID(l.fabric, pkt)
+	for _, neighbor := range Flood(l.fabric.Neighbors(), previousHop) {
 		copyPkt := pkt.Clone()
-		copyPkt.SetHeader(protocol.HeaderHop, l.fabric.ID())
+		copyPkt.SetHeader(protocol.HeaderVia, l.fabric.Address(l.fabric.ID()))
 		if err := copyPkt.DecrementTTL(); err != nil {
 			return
 		}
@@ -262,26 +306,33 @@ func (l *LSRAlgorithm) relay(pkt *protocol.Packet) {
 	}
 }
 
-// store inserts an announcement. It reports whether the announcement was new
-// information at all, and whether it changed the origin's set of neighbours —
-// a topology change, as opposed to a refreshed measurement.
-func (l *LSRAlgorithm) store(lsp protocol.LinkStatePacket) (accepted, structural bool) {
+// store inserts an announcement, resolved to local id space by the caller. It
+// reports whether the announcement was new information at all, and whether it
+// changed the origin's set of neighbours — a topology change, as opposed to a
+// refreshed measurement.
+//
+// A sequence number far enough below the one on file is trusted as a
+// restarted origin rather than discarded as stale: without this, a node that
+// restarts resets to seq 1 and the rest of the network — still holding a much
+// higher number for it — would ignore it until the old entry aged out.
+func (l *LSRAlgorithm) store(origin string, seq int, neighbors map[string]float64) (accepted, structural bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	existing, known := l.lsdb[lsp.Origin]
-	if known && lsp.Seq <= existing.lsp.Seq {
+	existing, known := l.lsdb[origin]
+	if known && seq <= existing.entry.Seq && existing.entry.Seq-seq < seqResetGap {
 		// Refresh the timer anyway: seeing the same announcement again still
 		// proves the origin is alive.
-		if lsp.Seq == existing.lsp.Seq {
+		if seq == existing.entry.Seq {
 			existing.refreshed = time.Now()
-			l.lsdb[lsp.Origin] = existing
+			l.lsdb[origin] = existing
 		}
 		return false, false
 	}
 
-	structural = !known || !sameNeighborSet(existing.lsp.Neighbors, lsp.Neighbors)
-	l.lsdb[lsp.Origin] = lsdbEntry{lsp: lsp, refreshed: time.Now()}
+	newEntry := Announcement{Origin: origin, Seq: seq, Neighbors: neighbors}
+	structural = !known || !sameNeighborSet(existing.entry.Neighbors, neighbors)
+	l.lsdb[origin] = lsdbEntry{entry: newEntry, refreshed: time.Now()}
 	return true, structural
 }
 
@@ -337,7 +388,7 @@ func (l *LSRAlgorithm) recompute() {
 		graph.AddEdge(self, neighbor, cost)
 	}
 	for origin, entry := range l.lsdb {
-		for neighbor, cost := range entry.lsp.Neighbors {
+		for neighbor, cost := range entry.entry.Neighbors {
 			graph.AddEdge(origin, neighbor, cost)
 		}
 	}

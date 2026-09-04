@@ -19,6 +19,12 @@ type Fabric interface {
 	SendTo(neighbor string, pkt *protocol.Packet) error
 	// Logf writes a line to the node console.
 	Logf(format string, args ...any)
+	// Address resolves a local id to the address it must be written as on the
+	// wire ("*" and an id that is already an address resolve to themselves).
+	Address(id string) string
+	// LocalID resolves a wire address back to the id this node knows it by,
+	// falling back to the address itself when it names no configured node.
+	LocalID(addr string) string
 }
 
 // Algorithm is the routing plane strategy. The forwarding plane is identical
@@ -48,4 +54,19 @@ type Algorithm interface {
 
 	// Table exposes the current routing table for the console.
 	Table() Table
+
+	// Topology exposes every link this algorithm currently knows about, for
+	// diagnostics. Dijkstra and LSR know the whole graph; Flooding only ever
+	// knows its own direct links.
+	Topology() []Edge
+}
+
+// Edge is one directed, weighted link of a known topology: From can reach To
+// at the given cost. Two nodes on a real link each report their own
+// direction, so both usually show up, possibly at slightly different costs —
+// each side measured its own round trip.
+type Edge struct {
+	From string
+	To   string
+	Cost float64
 }

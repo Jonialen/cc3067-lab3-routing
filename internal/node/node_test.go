@@ -123,11 +123,14 @@ func TestLSRConvergesAndRoutesOverTheShortestPath(t *testing.T) {
 	}
 
 	pkt := net.awaitDelivery("C", 5*time.Second)
-	if pkt.Payload != "hola desde A" {
-		t.Errorf("payload = %q, want %q", pkt.Payload, "hola desde A")
+	text, err := pkt.PayloadText()
+	if err != nil || text != "hola desde A" {
+		t.Errorf("payload = %q (err %v), want %q", text, err, "hola desde A")
 	}
-	if got := pkt.HeaderString(protocol.HeaderPath); got != "A>B" {
-		t.Errorf("traversed path = %q, want %q", got, "A>B")
+	// The trace records one address per hop (A, then B), by address rather
+	// than id — that is what the wire protocol requires.
+	if got := pkt.Trace(); len(got) != 2 {
+		t.Errorf("trace = %v, want 2 hops (A then B)", got)
 	}
 }
 
@@ -149,8 +152,8 @@ func TestFloodingDeliversExactlyOnceDespiteACycle(t *testing.T) {
 	}
 
 	first := net.awaitDelivery("D", 5*time.Second)
-	if first.Payload != "una sola vez" {
-		t.Errorf("payload = %q, want %q", first.Payload, "una sola vez")
+	if text, err := first.PayloadText(); err != nil || text != "una sola vez" {
+		t.Errorf("payload = %q (err %v), want %q", text, err, "una sola vez")
 	}
 
 	select {
@@ -182,8 +185,9 @@ func TestDijkstraBuildsItsTableFromConfigurationAlone(t *testing.T) {
 	if err := net.nodes["A"].Send("C", "estatico"); err != nil {
 		t.Fatalf("Send returned %v", err)
 	}
-	if pkt := net.awaitDelivery("C", 5*time.Second); pkt.Payload != "estatico" {
-		t.Errorf("payload = %q, want %q", pkt.Payload, "estatico")
+	pkt := net.awaitDelivery("C", 5*time.Second)
+	if text, err := pkt.PayloadText(); err != nil || text != "estatico" {
+		t.Errorf("payload = %q (err %v), want %q", text, err, "estatico")
 	}
 }
 

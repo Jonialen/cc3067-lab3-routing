@@ -36,7 +36,18 @@ func (f *FloodingAlgorithm) Start(ctx context.Context) {}
 
 // Forward relays the packet to every neighbour except its previous hop.
 func (f *FloodingAlgorithm) Forward(pkt *protocol.Packet) []string {
-	return Flood(f.fabric.Neighbors(), pkt)
+	return Flood(f.fabric.Neighbors(), previousHopID(f.fabric, pkt))
+}
+
+// previousHopID resolves the address recorded in a packet's "via" header (or
+// "from", when it has none yet — a packet still on its first hop) into the
+// local id space Fabric.Neighbors() uses.
+func previousHopID(fabric Fabric, pkt *protocol.Packet) string {
+	via := pkt.HeaderString(protocol.HeaderVia)
+	if via == "" {
+		via = pkt.From
+	}
+	return fabric.LocalID(via)
 }
 
 // HandleInfo is a no-op: flooding maintains no routing state to update.
@@ -67,4 +78,18 @@ func (f *FloodingAlgorithm) Table() Table {
 		table[neighbor] = Route{Dest: neighbor, NextHop: neighbor, Cost: cost}
 	}
 	return table
+}
+
+// Topology reports only our own direct links: flooding never learns about the
+// rest of the network.
+func (f *FloodingAlgorithm) Topology() []Edge {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	self := f.fabric.ID()
+	edges := make([]Edge, 0, len(f.costs))
+	for neighbor, cost := range f.costs {
+		edges = append(edges, Edge{From: self, To: neighbor, Cost: cost})
+	}
+	return edges
 }

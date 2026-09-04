@@ -3,15 +3,10 @@ package routing
 import (
 	"testing"
 	"time"
-
-	"github.com/uvg/cc3067-lab3/internal/protocol"
 )
 
 func TestFloodExcludesThePreviousHop(t *testing.T) {
-	pkt := protocol.New(protocol.ProtoFlooding, protocol.TypeMessage, "A", "D", "hi")
-	pkt.SetHeader(protocol.HeaderHop, "B")
-
-	targets := Flood([]string{"B", "C", "E"}, pkt)
+	targets := Flood([]string{"B", "C", "E"}, "B")
 
 	for _, target := range targets {
 		if target == "B" {
@@ -24,10 +19,9 @@ func TestFloodExcludesThePreviousHop(t *testing.T) {
 }
 
 func TestFloodExcludesTheOriginator(t *testing.T) {
-	// A neighbour that originated the packet already has it.
-	pkt := protocol.New(protocol.ProtoFlooding, protocol.TypeMessage, "C", "D", "hi")
-
-	targets := Flood([]string{"B", "C"}, pkt)
+	// A neighbour that originated the packet already has it, and a packet
+	// still on its first hop resolves previousHop to the originator.
+	targets := Flood([]string{"B", "C"}, "C")
 
 	if len(targets) != 1 || targets[0] != "B" {
 		t.Errorf("targets = %v, want only B", targets)
