@@ -13,7 +13,7 @@
 | _Luis Padilla_ | _2366_ |
 | _Anggie Quezada_ | _23643_ |
 
-**Repositorio:** _(completar con el enlace)_
+**Repositorio:** _https://github.com/Jonialen/cc3067-lab3-routing_
 
 ---
 
