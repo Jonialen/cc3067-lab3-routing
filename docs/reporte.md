@@ -8,10 +8,10 @@
 
 | Nombre | Carné |
 | --- | --- |
-| _(completar)_ | _(completar)_ |
-| _(completar)_ | _(completar)_ |
-| _(completar)_ | _(completar)_ |
-| _(completar)_ | _(completar)_ |
+| _Iris Ayala_ | _23965_ |
+| _Jonatan Díaz_ | _23837 _ |
+| _Luis Padilla_ | _2366_ |
+| _Anggie Quezada_ | _23643_ |
 
 **Repositorio:** _(completar con el enlace)_
 
@@ -121,18 +121,28 @@ consulta por paquete.
 
 ### 2.3 Protocolo
 
-Cada paquete es un objeto JSON terminado en salto de línea sobre TCP. El
-delimitado por línea mantiene el framing trivial y permite inspeccionar un nodo
-con `nc`.
+Cada paquete es un objeto JSON terminado en salto de línea sobre TCP (NDJSON),
+UTF-8, con un máximo de 65536 bytes por línea. El delimitado por línea mantiene
+el framing trivial y permite inspeccionar un nodo con `nc`.
+
+Este formato fue negociado entre todos los grupos antes de la prueba en clase
+(sección 3.6), y difiere del primer borrador interno del proyecto en tres
+puntos: los campos `from`/`to` se escriben como `IP:puerto` en vez del id corto
+de cada equipo, se agregaron `version` y `checksum`, y tres encabezados
+cambiaron de nombre. La traducción entre el id corto (`A`, `B`, ...) que usa
+internamente cada nodo y la dirección que exige el protocolo ocurre solo en la
+frontera de red (al armar y al leer un paquete), por lo que Dijkstra, Flooding
+y LSR no tuvieron que modificarse.
 
 ```json
 {
+  "version": 1,
   "proto": "lsr",
   "type": "message",
-  "from": "A",
-  "to": "I",
-  "ttl": 8,
-  "headers": [{"msg_id": "3f2a..."}, {"hop": "C"}, {"path": "A>C>F"}],
+  "from": "192.168.0.128:5000",
+  "to": "192.168.0.59:5000",
+  "ttl": 16,
+  "headers": [{"msg_id": "3f2a..."}, {"checksum": "0bded535"}, {"trace": ["192.168.0.128:5000"]}],
   "payload": "hola"
 }
 ```
@@ -141,9 +151,9 @@ Tipos de paquete implementados:
 
 | Tipo | Función |
 | --- | --- |
-| `hello` | Sondea a un vecino; el receptor responde con `echo`. |
-| `echo` | Devuelve el timestamp original para medir el viaje de ida y vuelta. |
-| `info` | Transporta un paquete de estado de enlace (LSP). |
+| `hello` | Sondea a un vecino, con payload `{"listen_port": 5000}`; el receptor responde con `echo`. |
+| `echo` | Devuelve el `t0` original para medir el viaje de ida y vuelta. |
+| `info` | Transporta un paquete de estado de enlace (LSP): `{"origin", "seq", "age_s", "neighbors": [{"id","weight"}]}`. |
 | `message` | Datos de usuario; se reenvía o se imprime al llegar a destino. |
 
 Encabezados propios. Los encabezados desconocidos provenientes de otras
@@ -152,14 +162,19 @@ necesario para la interoperabilidad entre grupos.
 
 | Encabezado | Propósito |
 | --- | --- |
-| `msg_id` | Identificador único, para descartar duplicados. |
-| `hop` | Nodo anterior, para no devolver el paquete por donde llegó. |
-| `sent_at` | Timestamp en nanosegundos, para medir el costo del enlace. |
-| `path` | Traza de los nodos recorridos. |
+| `msg_id` | Identificador único, para descartar duplicados; si falta, se deriva de forma determinística de `(from,to,type,payload)`. |
+| `checksum` | CRC32 (hex, 8 dígitos) del payload canónico; una discrepancia se registra pero nunca descarta el paquete. |
+| `via` | Dirección del salto anterior, para no devolver el paquete por donde llegó. |
+| `t0` | Timestamp del emisor, en segundos Unix fraccionarios, para medir el costo del enlace. |
+| `trace` | Traza de las direcciones recorridas. |
 
 El decodificador tolera paquetes de otros grupos que omitan campos: un paquete
-sin `ttl` recibe el valor por defecto y uno sin `msg_id` recibe uno generado, ya
-que sin identificador no es posible detectar duplicados.
+sin `ttl` recibe el valor por defecto, uno sin `msg_id` recibe uno derivado
+determinísticamente, y un `version` ausente o distinto de 1 se registra pero
+nunca es motivo para descartar el paquete. De igual forma, el payload de un LSP
+se acepta en las variantes que otros equipos puedan enviar (vecinos como
+diccionario, la clave `links` en vez de `neighbors`, o el payload completo
+serializado como texto), aunque este nodo siempre emite la forma canónica.
 
 ### 2.4 Dijkstra
 
@@ -368,12 +383,91 @@ I  seq=10   G(0.16) H(0.12)
 
 ### 3.6 Interconexión en clase
 
-> _Sección pendiente de completar tras la sesión presencial._
->
-> Documentar: direcciones IP asignadas a cada grupo, topología acordada,
-> ajustes al protocolo negociados entre equipos, mensajes intercambiados con
-> nodos de otras implementaciones, incompatibilidades encontradas y cómo se
-> resolvieron, y tiempo de convergencia observado en la red completa.
+La prueba conjunta usó una red de nueve grupos, identificados `A`–`I`, sobre la
+red inalámbrica del salón. Cada grupo corrió su propio nodo en modo `lsr` y
+solo configuró la fila correspondiente a su propio id: ni la topología completa
+ni las direcciones de los demás grupos son necesarias para que LSR funcione,
+ya que la topología se termina de aprender por difusión de anuncios de estado
+de enlace (ver 2.6).
+
+**Direcciones IP asignadas.** Cada grupo comunicó la IP en la que su nodo
+escucha (puerto 5000 para todos). Quedaron registradas en el pizarrón
+(Figura 1) y configuradas en `configs/names-class.json`:
+
+| Grupo | Dirección |
+| --- | --- |
+| A | 192.168.0.60:5000 |
+| B (nuestro grupo) | 192.168.0.128:5000 |
+| C | 192.168.0.137:5000 |
+| D | 192.168.0.155:5000 |
+| E | 192.168.0.219:5000 |
+| F | 192.168.0.153:5000 |
+| G | 192.168.0.218:5000 |
+| H | 192.168.0.138:5000 |
+| I | 192.168.0.59:5000 |
+
+![Direcciones IP asignadas a cada grupo](IMG_2615.JPG)
+
+**Topología acordada.** La cátedra proyectó el mapa de conexiones de referencia
+para los nueve grupos (Figura 2), con el costo de cada enlace ya fijado:
+
+![Mapa de conexiones entre nodos proyectado por la cátedra](conexion.jpeg)
+
+A cada grupo le correspondía configurar únicamente su propia fila de esa
+topología. Al grupo B le tocaron los vecinos A, C y E, con costo 4, 1 y 5
+respectivamente (`configs/topo-class.json`) — exactamente la adyacencia de B en
+la Figura 2. El grafo completo (`configs/topo-weighted.json`, transcrito de la
+misma figura para poder correr el modo `dijkstra` de forma aislada) es:
+
+| Nodo | Vecinos (costo) |
+| --- | --- |
+| A | B(4), C(2), D(7) |
+| B | A(4), C(1), E(5) |
+| C | A(2), B(1), D(3), F(8) |
+| D | A(7), C(3), F(2), G(6) |
+| E | B(5), F(3), H(6) |
+| F | C(8), D(2), E(3), G(1), H(4) |
+| G | D(6), F(1), I(6) |
+| H | E(6), F(4), I(2) |
+| I | G(6), H(2) |
+
+En modo `lsr` (el usado en la prueba) ningún grupo necesitó conocer esta tabla
+completa: cada uno solo configuró su propia fila, y el resto se aprendió por
+difusión de anuncios de estado de enlace, que es precisamente la propiedad que
+LSR explota.
+
+**Ajustes al protocolo negociados entre equipos.** El formato base sugerido por
+la cátedra (sección 3.2 del enunciado) se refinó entre grupos hasta la versión
+descrita en 2.3: `from`/`to` como `IP:puerto`, `version`, `checksum` CRC32 del
+payload canónico, y los encabezados `via`/`t0`/`trace`. Nuestra implementación
+inicial usaba nombres distintos para varios de estos campos (id corto en vez de
+dirección, `hop`/`sent_at`/`path`, sin `checksum` ni `version`); se corrigió el
+mismo día de la prueba para cumplir el acuerdo final, aislando la traducción
+id↔dirección en la frontera de red para no tocar los algoritmos de ruteo.
+
+**Resultados de la interconexión.** Como verificación cruzada, el grupo
+consolidó en el pizarrón la tabla de enrutamiento completa —origen, destino,
+siguiente salto y costo— resultante de la red de nueve nodos ya convergida
+(Figura 3). Se usó para confirmar que las tablas calculadas por cada
+implementación coincidían entre sí, es decir, que distintas implementaciones de
+LSR sobre la misma topología llegan al mismo resultado.
+
+![Tabla de enrutamiento consolidada (origen/destino, siguiente salto y costo) tras la convergencia de los nueve grupos](resultados.jpeg)
+
+> _(Foto de pizarrón; letra manuscrita. Antes de entregar, verificar con el
+> grupo que la transcripción de cualquier celda citada en el texto coincide con
+> la imagen.)_
+
+**Incompatibilidades encontradas.** La principal fue de formato, no de
+comportamiento: antes de acordar el protocolo final, nuestro nodo enviaba
+`from`/`to` como el id corto de topología en vez de la dirección IP, por lo que
+un nodo de otro equipo no podía interpretar a quién iba dirigido un paquete
+nuestro. Se resolvió adoptando `IP:puerto` en el borde de red, sin cambiar la
+lógica interna de enrutamiento (sección 2.3).
+
+**Tiempo de convergencia.** _(completar con el tiempo observado desde que se
+levantaron los nueve nodos hasta que `topology`/`dijkstra` mostraron rutas a
+los nueve grupos)._
 
 ---
 
