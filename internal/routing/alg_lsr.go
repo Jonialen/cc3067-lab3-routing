@@ -27,6 +27,11 @@ const (
 	// announced immediately; a cost that merely drifted can wait, because the
 	// periodic refresh will carry it anyway.
 	minAnnounceInterval = 5 * time.Second
+	// asymmetryGrace is how long a link may stay declared by only one of its
+	// endpoints before it is reported. It must comfortably exceed the refresh
+	// interval: every boot is asymmetric for a moment, because announcements
+	// arrive one at a time, and warning about that would be noise.
+	asymmetryGrace = 3 * lspInterval
 	// seqResetGap is how far below the last known sequence number a fresh one
 	// must fall before it is trusted as a restarted origin rather than a
 	// stale duplicate. See store.
@@ -77,16 +82,20 @@ type LSRAlgorithm struct {
 	// lastAnnounce is when we last flooded our own link state, used to rate
 	// limit announcements caused by cost jitter.
 	lastAnnounce time.Time
+	// asymmetry tracks links declared by only one endpoint, so a persistent
+	// one is reported and a transient one is not.
+	asymmetry *asymmetryWatch
 }
 
 // NewLSR builds the link-state algorithm.
 func NewLSR(fabric Fabric) *LSRAlgorithm {
 	return &LSRAlgorithm{
-		fabric: fabric,
-		table:  NewSafeTable(),
-		seen:   NewSeenCache(seenTTL),
-		links:  map[string]float64{},
-		lsdb:   map[string]lsdbEntry{},
+		fabric:    fabric,
+		table:     NewSafeTable(),
+		seen:      NewSeenCache(seenTTL),
+		links:     map[string]float64{},
+		lsdb:      map[string]lsdbEntry{},
+		asymmetry: newAsymmetryWatch(),
 	}
 }
 
@@ -124,6 +133,7 @@ func (l *LSRAlgorithm) ageLoop(ctx context.Context) {
 			if l.expire() {
 				l.recompute()
 			}
+			l.reportAsymmetries()
 		}
 	}
 }
@@ -261,6 +271,26 @@ func (l *LSRAlgorithm) Database() map[string]Announcement {
 		out[origin] = entry.entry
 	}
 	return out
+}
+
+// Asymmetries reports the links that only one of their two endpoints declares,
+// over exactly the edge set recompute feeds to Dijkstra. See the Asymmetry
+// type for why this is worth checking: it is the one inconsistency a
+// link-state network can carry indefinitely without any node erroring.
+func (l *LSRAlgorithm) Asymmetries() []Asymmetry {
+	return Asymmetries(l.Topology())
+}
+
+// reportAsymmetries puts persistent one-sided links on the console. It runs on
+// the ageing sweep because that is already the periodic health check of the
+// database, and it stays silent unless a finding outlives the grace period.
+func (l *LSRAlgorithm) reportAsymmetries() {
+	for _, a := range l.asymmetry.due(l.Asymmetries(), time.Now(), asymmetryGrace) {
+		l.fabric.Logf(
+			"inconsistent topology: %s declares a link to %s (cost %.2f) but %s does not declare it back; "+
+				"the link is unusable from %s and both nodes will compute different routes",
+			a.Declared, a.Missing, a.Cost, a.Missing, a.Missing)
+	}
 }
 
 // announce builds our own link-state packet and floods it to every neighbour.

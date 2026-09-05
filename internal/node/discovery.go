@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"time"
 
@@ -20,10 +21,19 @@ const minCost = 0.01
 // keeps the cost responsive to a real change while ignoring noise.
 const costSmoothing = 0.25
 
+// silentGrace is how long a configured neighbour may go without ever
+// answering before the node says so out loud. A few probe intervals is enough
+// to rule out a slow start and short enough to catch the problem while the
+// network is still being set up, which is the only moment the warning is
+// actionable.
+const silentGrace = 3 * helloInterval
+
 // discoveryLoop is the routing plane's neighbour monitor. It probes every
 // configured neighbour on a fixed interval and declares silent ones down, so
 // each algorithm receives link events instead of having to poll.
 func (n *Node) discoveryLoop(ctx context.Context) {
+	started := time.Now()
+
 	// Probe once immediately: waiting a full interval before the first hello
 	// would leave the network unusable for several seconds after boot.
 	n.probeAll()
@@ -37,8 +47,39 @@ func (n *Node) discoveryLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			n.reapDead()
+			n.warnSilentNeighbors(started)
 			n.probeAll()
 		}
+	}
+}
+
+// warnSilentNeighbors names the configured neighbours that have never
+// answered a single hello, once each, after the grace period has passed.
+//
+// This is the counterpart to the topology consistency check in the routing
+// plane, and it covers the case that one cannot see. A link both endpoints
+// fail to establish is perfectly symmetric — neither declares it — so it looks
+// consistent from every angle while simply being absent from the map. The only
+// node that can notice is this one, because it is the only one that knows the
+// link was supposed to exist: it is in our configuration and it never came up.
+func (n *Node) warnSilentNeighbors(started time.Time) {
+	if time.Since(started) < silentGrace {
+		return
+	}
+
+	for _, id := range n.SilentNeighbors() {
+		n.mu.Lock()
+		alreadyWarned := n.warnedSilent[id]
+		n.warnedSilent[id] = true
+		n.mu.Unlock()
+
+		if alreadyWarned {
+			continue
+		}
+		addr, _ := n.names.Endpoint(id)
+		n.Logf("neighbour %s (%s) has never answered a hello: it is configured as our neighbour "+
+			"but the link was never established, so we are not announcing it to the network. "+
+			"Check that the address is current and that %s is running", id, addr, id)
 	}
 }
 
@@ -191,6 +232,30 @@ type NeighborSnapshot struct {
 	Alive    bool
 	Cost     float64
 	LastSeen time.Time
+}
+
+// SilentNeighbors lists the configured neighbours that have never answered a
+// single hello, sorted by id.
+//
+// This is the cheapest diagnostic in the node, and the one that catches the
+// failure the topology consistency check cannot see. A link-state node only
+// announces what it can measure, so a neighbour that never answers is silently
+// dropped from our announcement: the rest of the network is told the link does
+// not exist, and no node anywhere reports an error. When both endpoints fail
+// to establish the link, the resulting graph is even perfectly symmetric —
+// neither side declares it — so it looks consistent from every angle while
+// simply being absent from the map. The only node that can notice is this one,
+// because it is the only one that knows the link was supposed to exist: it is
+// in our configuration, and it never came up.
+func (n *Node) SilentNeighbors() []string {
+	silent := make([]string, 0)
+	for _, s := range n.NeighborStates() {
+		if s.LastSeen.IsZero() {
+			silent = append(silent, s.ID)
+		}
+	}
+	sort.Strings(silent)
+	return silent
 }
 
 // NeighborStates returns the current view of every known link.

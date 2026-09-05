@@ -13,6 +13,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -74,6 +75,17 @@ type Options struct {
 	// The console does not need it — delivery is already printed — but it
 	// gives tests a way to observe delivery without parsing logs.
 	OnDeliver func(*protocol.Packet)
+	// LogOutput redirects the node console. It defaults to standard output;
+	// tests set it to capture the diagnostics the node emits on its own.
+	LogOutput io.Writer
+}
+
+// logOutput falls back to standard output when no writer was supplied.
+func logOutput(w io.Writer) io.Writer {
+	if w == nil {
+		return os.Stdout
+	}
+	return w
 }
 
 // neighborState tracks what the discovery plane knows about one direct link.
@@ -116,6 +128,9 @@ type Node struct {
 
 	mu        sync.RWMutex
 	neighbors map[string]*neighborState
+	// warnedSilent remembers which never-seen neighbours were already
+	// reported, so the probe loop names each one once instead of every tick.
+	warnedSilent map[string]bool
 
 	wg sync.WaitGroup
 }
@@ -141,18 +156,19 @@ func New(opts Options) (*Node, error) {
 	}
 
 	n := &Node{
-		id:        opts.ID,
-		mode:      opts.Mode,
-		names:     opts.Names,
-		verbose:   opts.Verbose,
-		selfAddr:  selfAddr,
-		selfPort:  selfPort,
-		client:    transport.NewClient(),
-		logger:    log.New(os.Stdout, fmt.Sprintf("[%s] ", opts.ID), log.Ltime),
-		inbox:     make(chan *protocol.Packet, inboxSize),
-		seen:      routing.NewSeenCache(messageSeenTTL),
-		neighbors: map[string]*neighborState{},
-		onDeliver: opts.OnDeliver,
+		id:           opts.ID,
+		mode:         opts.Mode,
+		names:        opts.Names,
+		verbose:      opts.Verbose,
+		selfAddr:     selfAddr,
+		selfPort:     selfPort,
+		client:       transport.NewClient(),
+		logger:       log.New(logOutput(opts.LogOutput), fmt.Sprintf("[%s] ", opts.ID), log.Ltime),
+		inbox:        make(chan *protocol.Packet, inboxSize),
+		seen:         routing.NewSeenCache(messageSeenTTL),
+		neighbors:    map[string]*neighborState{},
+		warnedSilent: map[string]bool{},
+		onDeliver:    opts.OnDeliver,
 	}
 	n.server = transport.NewServer(listen, n.receive, n.Logf)
 

@@ -82,6 +82,8 @@ func (c *Console) dispatch(line string) bool {
 		c.printTopology()
 	case "dijkstra":
 		c.printDijkstra()
+	case "check":
+		c.printCheck()
 	case "info":
 		fmt.Fprintf(c.out, "id=%s mode=%s\n", c.node.ID(), c.node.Mode())
 	case "help", "?":
@@ -125,6 +127,48 @@ func (c *Console) printNeighbors() {
 			lastSeen = s.LastSeen.Format("15:04:05")
 		}
 		fmt.Fprintf(c.out, "%-16s %-8s %-8.2f %s\n", s.ID, state, s.Cost, lastSeen)
+	}
+}
+
+// printCheck runs the two consistency diagnostics and reports what they find.
+//
+// They answer different questions and neither subsumes the other. The silent
+// neighbour check compares our configuration against what discovery actually
+// observed, and is the only way to notice a link both endpoints failed to
+// establish: that graph is symmetric — nobody declares the link — so it looks
+// perfectly consistent while simply being absent. The topology check compares
+// the announcements of different nodes against each other, and catches a link
+// one side declares and the other does not, which is usable in one direction
+// only and makes the two nodes compute different routes.
+//
+// Both failures are silent by nature: every node announced exactly what it
+// measured and every Dijkstra ran correctly. This command is what turns them
+// into something a person can read.
+func (c *Console) printCheck() {
+	problems := 0
+
+	if silent := c.node.SilentNeighbors(); len(silent) > 0 {
+		problems += len(silent)
+		fmt.Fprintln(c.out, "configured neighbours that never answered a hello:")
+		for _, id := range silent {
+			fmt.Fprintf(c.out, "  %-16s check that its address is current and that it is running\n", id)
+		}
+	}
+
+	if lsr, ok := c.node.Algorithm().(*routing.LSRAlgorithm); ok {
+		found := lsr.Asymmetries()
+		problems += len(found)
+		if len(found) > 0 {
+			fmt.Fprintln(c.out, "links declared by only one endpoint:")
+			for _, a := range found {
+				fmt.Fprintf(c.out, "  %s -> %s (cost %.2f): %s does not declare it back\n",
+					a.Declared, a.Missing, a.Cost, a.Missing)
+			}
+		}
+	}
+
+	if problems == 0 {
+		fmt.Fprintln(c.out, "no inconsistencies found")
 	}
 }
 
@@ -214,6 +258,8 @@ func (c *Console) printHelp() {
   lsdb                 show the link-state database (lsr mode only)
   topology             show every known link and its weight (alias: graph)
   dijkstra             recompute and show routes: destino, next hop, costo
+  check                diagnose links that are configured but never came up,
+                       and links only one endpoint declares
   info                 show this node's id and mode
   help                 show this text
   quit                 stop the node

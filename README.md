@@ -97,9 +97,33 @@ send <dest> <text>   send a user message through the network
 table                show the routing table
 neighbors            show direct links and their measured cost
 lsdb                 show the link-state database (lsr mode only)
+topology             show every known link and its weight (alias: graph)
+dijkstra             recompute and show routes: destination, next hop, cost
+check                diagnose links that are configured but never came up,
+                     and links only one endpoint declares
 info                 show this node's id and mode
+help                 show this text
 quit                 stop the node
 ```
+
+### Diagnosing a network that does not converge
+
+`check` answers the question a routing table cannot: not "what did I compute"
+but "what did I fail to learn". It runs two independent checks.
+
+The first lists **configured neighbours that never answered a hello**. A
+link-state node only announces links it measured, so a neighbour with a stale
+address is dropped from the announcement silently — the rest of the network is
+told the link does not exist, and nothing errors anywhere. This is the check
+that catches a wrong entry in the name table.
+
+The second lists **links only one endpoint declares**. Those are usable in one
+direction only, and make the two nodes compute different routes while both
+remain internally consistent.
+
+Both also report themselves on the console without being asked, once per
+finding: silent neighbours after a few probe intervals, asymmetries after a
+grace period that avoids flagging the transient asymmetry of every boot.
 
 ## Configuration files
 
@@ -112,11 +136,11 @@ course.
 { "type": "topo", "config": { "A": ["B", "C"], "B": ["A", "C", "D"] } }
 ```
 
-`configs/topo-weighted.json` — the same graph with explicit link weights, which
-the loader accepts interchangeably:
+`configs/topo-weighted.json` — the nine-node class graph with explicit link
+weights, which the loader accepts interchangeably with the list form:
 
 ```json
-{ "type": "topo", "config": { "A": { "B": 1, "C": 4 } } }
+{ "type": "topo", "config": { "A": { "B": 4, "C": 2, "D": 7 } } }
 ```
 
 `configs/names-default.json` — where each node listens:
