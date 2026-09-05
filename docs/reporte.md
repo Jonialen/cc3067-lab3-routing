@@ -9,7 +9,7 @@
 | Nombre | Carné |
 | --- | --- |
 | _Iris Ayala_ | _23965_ |
-| _Jonatan Díaz_ | _23837 _ |
+| _Jonatan Díaz_ | _23837_ |
 | _Luis Padilla_ | _2366_ |
 | _Anggie Quezada_ | _23643_ |
 
