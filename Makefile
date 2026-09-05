@@ -1,7 +1,7 @@
 BINARY := bin/node
 PKG    := ./cmd/node
 
-.PHONY: all build test race vet fmt clean run demo docker-up docker-down docker-logs
+.PHONY: all build test race vet fmt clean run demo docker-up docker-down docker-logs report
 
 all: fmt vet test build
 
@@ -48,6 +48,21 @@ docker-down:
 ## docker-logs: follow every node's console output at once
 docker-logs:
 	docker compose logs -f
+
+## report: render docs/reporte.md to docs/reporte.pdf via pandoc + xelatex
+report:
+	pandoc docs/reporte.md -o docs/reporte.pdf \
+		--pdf-engine=xelatex \
+		--from=markdown+smart \
+		--resource-path=docs \
+		--toc --toc-depth=2 \
+		--syntax-highlighting=tango \
+		-V documentclass=article -V papersize=letter \
+		-V geometry:margin=2.5cm -V fontsize=11pt -V lang=es \
+		-V colorlinks=true -V linkcolor=black -V urlcolor=blue \
+		-V mainfont="Liberation Serif" \
+		-V sansfont="Liberation Sans" \
+		-V monofont="Liberation Mono"
 
 clean:
 	rm -rf bin

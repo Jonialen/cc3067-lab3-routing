@@ -394,24 +394,31 @@ de enlace (ver 2.6).
 escucha (puerto 5000 para todos). Quedaron registradas en el pizarrón
 (Figura 1) y configuradas en `configs/names-class.json`:
 
-| Grupo | Dirección |
-| --- | --- |
-| A | 192.168.0.60:5000 |
-| B (nuestro grupo) | 192.168.0.128:5000 |
-| C | 192.168.0.137:5000 |
-| D | 192.168.0.155:5000 |
-| E | 192.168.0.219:5000 |
-| F | 192.168.0.153:5000 |
-| G | 192.168.0.218:5000 |
-| H | 192.168.0.138:5000 |
-| I | 192.168.0.59:5000 |
+| Grupo | Registrado en el pizarrón | Configurado en `names-class.json` |
+| --- | --- | --- |
+| A | 192.168.0.60 | 192.168.0.60:5000 |
+| B (nuestro grupo) | 192.168.0.149 | **192.168.0.128:5000** |
+| C | 192.168.0.137 | 192.168.0.137:5000 |
+| D | 192.168.0.106 | **192.168.0.155:5000** |
+| E | 192.168.0.219 | 192.168.0.219:5000 |
+| F | 192.168.0.153 | 192.168.0.153:5000 |
+| G | 192.168.0.218 | 192.168.0.218:5000 |
+| H | 192.168.0.138 | 192.168.0.138:5000 |
+| I | 192.168.0.59 | 192.168.0.59:5000 |
 
-![Direcciones IP asignadas a cada grupo](IMG_2615.JPG)
+Siete de las nueve entradas coinciden. En las dos que no —B y D, resaltadas— la
+dirección correcta era la de nuestra configuración: **el pizarrón estaba
+desactualizado en ambos casos**. B es nuestro propio nodo, de modo que conocemos
+su dirección de primera mano; la de D se confirmó con el grupo correspondiente.
+Esas dos entradas obsoletas resultaron ser la causa de la falla, y se analizan
+en la sección 3.7.
+
+![Direcciones IP de cada grupo, registradas en el pizarron](direcciones.png){ width=48% }
 
 **Topología acordada.** La cátedra proyectó el mapa de conexiones de referencia
 para los nueve grupos (Figura 2), con el costo de cada enlace ya fijado:
 
-![Mapa de conexiones entre nodos proyectado por la cátedra](conexion.jpeg)
+![Mapa de conexiones entre nodos proyectado por la cátedra](conexion.png){ width=95% }
 
 A cada grupo le correspondía configurar únicamente su propia fila de esa
 topología. Al grupo B le tocaron los vecinos A, C y E, con costo 4, 1 y 5
@@ -445,29 +452,173 @@ dirección, `hop`/`sent_at`/`path`, sin `checksum` ni `version`); se corrigió e
 mismo día de la prueba para cumplir el acuerdo final, aislando la traducción
 id↔dirección en la frontera de red para no tocar los algoritmos de ruteo.
 
-**Resultados de la interconexión.** Como verificación cruzada, el grupo
-consolidó en el pizarrón la tabla de enrutamiento completa —origen, destino,
-siguiente salto y costo— resultante de la red de nueve nodos ya convergida
-(Figura 3). Se usó para confirmar que las tablas calculadas por cada
-implementación coincidían entre sí, es decir, que distintas implementaciones de
-LSR sobre la misma topología llegan al mismo resultado.
+**Resultados de la interconexión.** Como verificación cruzada, al final de la
+prueba el grupo consolidó en el pizarrón la matriz de enrutamiento completa de
+la red —para cada par origen/destino, el siguiente salto y el costo total
+(Figura 3)—. Esa matriz es el insumo que permite el análisis de la subsección
+siguiente, porque hace visible algo que ningún nodo puede ver por sí solo: si
+las nueve implementaciones convergieron o no a la misma topología.
 
-![Tabla de enrutamiento consolidada (origen/destino, siguiente salto y costo) tras la convergencia de los nueve grupos](resultados.jpeg)
+Como referencia de contraste, la tabla que produce Dijkstra sobre la topología
+acordada de la Figura 2 —el resultado que las nueve implementaciones deberían
+haber alcanzado— es la siguiente, en formato `siguiente salto / costo`:
 
-> _(Foto de pizarrón; letra manuscrita. Antes de entregar, verificar con el
-> grupo que la transcripción de cualquier celda citada en el texto coincide con
-> la imagen.)_
+| Origen ↓ / Destino → | A | B | C | D | E | F | G | H | I |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **A** | –/0 | C/3 | C/2 | C/5 | C/8 | C/7 | C/8 | C/11 | C/13 |
+| **B** | C/3 | –/0 | C/1 | C/4 | E/5 | C/6 | C/7 | C/10 | C/12 |
+| **C** | A/2 | B/1 | –/0 | D/3 | B/6 | D/5 | D/6 | D/9 | D/11 |
+| **D** | C/5 | C/4 | C/3 | –/0 | F/5 | F/2 | F/3 | F/6 | F/8 |
+| **E** | B/8 | B/5 | B/6 | F/5 | –/0 | F/3 | F/4 | H/6 | H/8 |
+| **F** | D/7 | D/6 | D/5 | D/2 | E/3 | –/0 | G/1 | H/4 | H/6 |
+| **G** | F/8 | F/7 | F/6 | F/3 | F/4 | F/1 | –/0 | F/5 | I/6 |
+| **H** | F/11 | F/10 | F/9 | F/6 | E/6 | F/4 | F/5 | –/0 | I/2 |
+| **I** | H/13 | H/12 | H/11 | H/8 | H/8 | H/6 | G/6 | H/2 | –/0 |
 
-**Incompatibilidades encontradas.** La principal fue de formato, no de
+![Matriz de enrutamiento consolidada (siguiente salto y costo para cada par origen/destino) construida en el pizarrón al final de la prueba](resultados.png){ width=88% }
+
+> _(Foto de pizarrón; letra manuscrita. Las celdas citadas textualmente en el
+> análisis siguiente corresponden a la fila B, verificada contra la imagen.)_
+
+**Incompatibilidades encontradas.** La primera fue de formato, no de
 comportamiento: antes de acordar el protocolo final, nuestro nodo enviaba
 `from`/`to` como el id corto de topología en vez de la dirección IP, por lo que
 un nodo de otro equipo no podía interpretar a quién iba dirigido un paquete
 nuestro. Se resolvió adoptando `IP:puerto` en el borde de red, sin cambiar la
-lógica interna de enrutamiento (sección 2.3).
+lógica interna de enrutamiento (sección 2.3). La segunda no fue de formato sino
+de estado —direcciones desactualizadas y enlaces que nunca subieron— y es la que
+se analiza a continuación.
 
-**Tiempo de convergencia.** _(completar con el tiempo observado desde que se
-levantaron los nueve nodos hasta que `topology`/`dijkstra` mostraron rutas a
-los nueve grupos)._
+### 3.7 Análisis de la falla: por qué todo el tráfico de B salió por C
+
+La prueba en clase no alcanzó una convergencia correcta, y la matriz del
+pizarrón permite identificar la causa con precisión en lugar de conjeturarla.
+
+**El síntoma.** La fila correspondiente a nuestro nodo B en la matriz
+consolidada (Figura 3) tiene el siguiente salto `C` en **todas** sus celdas, y
+costos sistemáticamente mayores a los de la tabla de referencia:
+
+| Fila B, destino → | A | B | C | D | E | F | G | H | I |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Observada (pizarrón) | C/3 | –/0 | C/1 | C/10 | C/12 | C/9 | C/10 | C/13 | C/15 |
+| Esperada (Dijkstra) | C/3 | –/0 | C/1 | C/4 | **E**/5 | C/6 | C/7 | C/10 | C/12 |
+
+Dos celdas bastan para probar que la tabla observada no corresponde a la
+topología acordada. La primera es el destino E: B tiene un enlace **directo** a
+E de peso 5, de modo que ninguna ejecución correcta de Dijkstra puede asignarle
+costo 12 ni un siguiente salto distinto de E. La segunda es el destino D: el
+camino B→C→D cuesta 1+3 = 4, y la tabla reporta 10.
+
+**La causa.** Un costo de 10 hacia D corresponde exactamente al camino
+B→C→A→D (1+2+7). Es decir, la ruta rodeó por A en vez de usar el enlace C–D.
+Partiendo de esa pista se puede reconstruir qué grafo produce la fila
+observada: al eliminar las aristas **B–E** y **C–D** de la topología de la
+Figura 2 y volver a ejecutar Dijkstra desde B, el resultado reproduce la fila
+del pizarrón **en las nueve celdas, incluyendo los nueve siguientes saltos**:
+
+```
+sin B-E ni C-D:   A:C/3  B:-/0  C:C/1  D:C/10  E:C/12
+                  F:C/9  G:C/10  H:C/13  I:C/15
+```
+
+Una coincidencia de nueve celdas no es casual. La conclusión es que **la base de
+datos de estado de enlace de nuestro nodo carecía de dos aristas**: su propio
+enlace hacia E, y el enlace C–D. Con esas dos ausencias, C quedó como el único
+vecino vivo de B y como su única salida hacia el resto de la red, que es
+precisamente el comportamiento que se observó durante la prueba.
+
+Conviene ser preciso sobre el rol de C, porque el síntoma invita a una
+conclusión equivocada. **C no falló**: fue el único enlace que sí funcionó. Lo
+que falló fue todo lo demás alrededor de C. La ausencia del enlace C–D en
+nuestra vista significa que el anuncio de estado de enlace de C, tal como
+nuestro nodo lo recibió y almacenó, no declaraba a D entre sus vecinos —ya sea
+porque C tampoco había logrado establecer ese enlace, o porque el anuncio que
+nos llegó estaba incompleto—. La matriz del pizarrón respalda la primera
+lectura solo parcialmente: otras filas sí reflejan el enlace C–D, lo que indica
+que **distintos nodos tenían vistas distintas del mismo grafo**. Esa
+discrepancia entre filas es, en sí misma, el hallazgo central de la prueba.
+
+**El mecanismo, y por qué es silencioso.** El descubrimiento de vecinos
+(`internal/node/discovery.go`) marca vivo a un vecino únicamente cuando este
+responde un `hello` con un `echo`. Sin ese viaje de ida y vuelta completo no se
+dispara `OnLinkUp`, y en consecuencia el enlace **no entra en el anuncio de
+estado de enlace que el nodo emite**. Aquí está lo importante: un enlace que
+nunca sube no genera ningún error. No hay excepción, no hay paquete rechazado,
+no hay entrada de bitácora que grite. Simplemente hay una arista menos en el
+grafo, y Dijkstra —que es correcto— calcula obedientemente el camino óptimo
+sobre un grafo equivocado. El resultado es una tabla de enrutamiento
+perfectamente consistente consigo misma y distinta de la del vecino. Cuando dos
+nodos adyacentes discrepan sobre qué aristas existen, un paquete puede ser
+enviado a un salto que no tiene ruta de retorno y desaparecer sin dejar rastro.
+
+**El origen: una dirección IP desactualizada.** El pizarrón registró a
+B en `192.168.0.149`, mientras que la tabla de nombres con la que efectivamente
+corrimos declara `192.168.0.128`. Las direcciones se asignan por DHCP sobre la
+red inalámbrica del salón, y una renovación de concesión durante la sesión
+cambia la dirección sin avisar a nadie. Lo relevante es la asimetría que esto
+produce: nuestro nodo tenía correctas las direcciones de sus tres vecinos —A
+(.60), C (.137) y E (.219) coinciden con el pizarrón—, de modo que **nuestros
+`hello` salían bien**; pero cualquier grupo que resolviera a B desde el pizarrón
+enviaba su `echo` a `.149`, una dirección que ya no era la nuestra. El viaje de
+ida y vuelta nunca se cerraba y el enlace jamás subía, **aunque la conectividad
+existiera en un sentido**. Esta es exactamente la forma de falla que produce el
+grafo asimétrico reconstruido arriba, y explica que un vecino sí funcionara: le
+basta con haber respondido a la dirección del campo `from` del paquete recibido,
+en vez de a la que tenía configurada en su tabla de nombres.
+
+**La segunda arista, y por qué el origen es el mismo.** Falta explicar la
+ausencia del enlace C–D, que no es vecino nuestro y por lo tanto no depende de
+nuestro descubrimiento. La explicación está en la otra entrada obsoleta del
+pizarrón y en un detalle de la implementación.
+
+El detalle es que `Graph.AddEdge` (`internal/routing/graph.go`) registra
+aristas **dirigidas**: al reconstruir la topología, `recompute` recorre la base
+de datos y, por cada anuncio, agrega únicamente las aristas que salen de su
+origen. Un enlace C→D solo existe en nuestro grafo si **C lo declara**; que D
+declare a C agrega la arista D→C, que es la dirección contraria y no sirve para
+que un paquete salga de B hacia D.
+
+La cadena causal es entonces directa. El pizarrón registraba a D en `.106`
+cuando D escuchaba en `.155`. C, que sí es vecino de D en el mapa acordado,
+resolvía a D desde esa dirección obsoleta: sus `hello` iban a una dirección
+vacía, nunca recibía `echo`, nunca disparaba `OnLinkUp("D")` y en consecuencia
+**su anuncio de estado de enlace no incluía a D**. Nuestro nodo recibió ese
+anuncio incompleto, lo almacenó tal cual —correctamente, porque es lo único que
+C decía saber— y calculó Dijkstra sobre un grafo sin la arista C→D.
+
+Las dos aristas faltantes tienen por lo tanto **un único origen**: dos entradas
+desactualizadas en la tabla de direcciones. La de B rompió nuestro propio enlace
+con E; la de D rompió el enlace de C con D, y de rebote nuestra vista de la
+topología. Ninguna de las dos produjo un error en ningún nodo: produjeron
+anuncios que eran honestos —cada nodo anunció exactamente lo que podía medir— y
+sin embargo describían una red que no era la acordada.
+
+**Tiempo de convergencia.** Por lo anterior no se obtuvo una medición útil del
+tiempo de convergencia de los nueve grupos: la red no alcanzó un estado en el
+que los nueve anuncios estuvieran presentes y fueran mutuamente consistentes, de
+modo que no existe un instante de convergencia que medir. Como referencia del
+comportamiento esperado, en el entorno controlado de nueve contenedores
+(sección 3.1) —misma cantidad de nodos, mismo intervalo de `hello`, mismo
+código— la topología completa queda visible en el comando `topology` de
+cualquier nodo pocos segundos después del arranque, dominada por el intervalo de
+sondeo y no por el cálculo de rutas. La diferencia entre ambos entornos no está
+en el algoritmo, sino en que en uno las direcciones son estables y en el otro no.
+
+**Cómo se habría detectado en el momento.** Las tres verificaciones que habrían
+acotado el problema, y que quedan como recomendación operativa:
+
+1. Confirmar conectividad TCP hacia cada vecino con `nc <ip> 5000` **antes** de
+   levantar los nodos, y en ambos sentidos. Un enlace que no pasa esa prueba no
+   va a aparecer en ninguna topología.
+2. Contrastar el comando de consola `neighbors` contra la fila configurada. Todo
+   vecino ausente de esa lista es un enlace que el nodo no está anunciando, y por
+   lo tanto una arista que el resto de la red no verá.
+3. Comparar el comando `topology` entre dos grupos cualesquiera. Una arista
+   presente en uno y ausente en el otro identifica la asimetría de inmediato, que
+   es justamente lo que la matriz del pizarrón reveló, pero recién al final.
+
+Las tres son baratas. La lección es que en una red distribuida el estado que hay
+que verificar primero no es el propio, sino el acuerdo entre pares.
 
 ---
 
@@ -523,6 +674,66 @@ al ejecutar la red completa.
   anunciar enlaces inexistentes y atraer tráfico.
 - La detección de caída depende de que el vecino deje de responder. Un enlace
   que responde pero descarta datos no se detecta.
+- La topología se arma con aristas dirigidas: un enlace solo es utilizable en el
+  sentido en que su origen lo anuncia. Esto es correcto —un nodo no debe afirmar
+  lo que no midió— pero implica que un enlace anunciado por un solo extremo
+  queda inutilizable en la práctica sin que ningún nodo lo reporte como
+  anomalía. A raíz de esta práctica se implementaron dos diagnósticos que
+  cubren el vacío; se describen en la sección 4.5.
+
+### 4.5 Diagnósticos incorporados a partir de esta práctica
+
+La falla de la sección 3.7 no se detectó durante la prueba porque el nodo no
+tenía forma de decir en voz alta lo que le faltaba. A partir de ella se
+agregaron dos chequeos. Son complementarios y **ninguno subsume al otro**, lo
+cual es el punto más interesante de los dos.
+
+**Chequeo de simetría de la topología** (`Asymmetries`, en
+`internal/routing/symmetry.go`). Recorre exactamente el mismo conjunto de
+aristas que `recompute` le entrega a Dijkstra y reporta los enlaces que un
+extremo declara y el otro no. Es la inconsistencia clásica de una red de estado
+de enlace: el enlace es utilizable en un solo sentido, los dos nodos calculan
+tablas distintas, y ninguno de los dos comete ningún error. Un nodo del que no
+se ha recibido ningún anuncio se excluye deliberadamente del reporte: no
+contribuye aristas salientes, y no se puede distinguir un enlace que se niega a
+declarar de uno cuyo anuncio todavía no llegó.
+
+**Chequeo de vecinos silenciosos** (`SilentNeighbors`, en
+`internal/node/discovery.go`). Compara la fila de topología configurada contra
+lo que el descubrimiento realmente observó, y nombra a los vecinos que nunca
+respondieron un solo `hello`.
+
+Este segundo chequeo es el que habría detectado nuestra falla, y la razón
+merece precisión: **el chequeo de simetría no la habría encontrado**. Cuando los
+dos extremos fallan en establecer el enlace —que es lo que ocurrió con B–E, y
+lo más probable con C–D— ninguno de los dos lo declara, y el grafo resultante es
+perfectamente simétrico. No hay contradicción entre anuncios que detectar: hay
+una arista que sencillamente no está, y se ve consistente desde todos los
+ángulos. El único nodo capaz de notarlo es aquel que sabía que el enlace debía
+existir, porque lo tiene en su configuración y nunca subió.
+
+El chequeo de simetría sigue siendo necesario para el caso complementario: si el
+anuncio de D sí hubiera llegado declarando a C mientras C no declaraba a D, la
+contradicción habría quedado a la vista de inmediato.
+
+Ambos se ejecutan solos —el de vecinos silenciosos tras unos pocos intervalos de
+sondeo, el de simetría tras un período de gracia que evita reportar la
+asimetría transitoria de todo arranque— y cada hallazgo se informa una sola vez,
+rearmándose si se resuelve y vuelve a aparecer. El comando de consola `check`
+los ejecuta a demanda:
+
+```
+B> check
+configured neighbours that never answered a hello:
+  E                check that its address is current and that it is running
+links declared by only one endpoint:
+  C -> D (cost 3.00): D does not declare it back
+```
+
+Es una cantidad de código muy pequeña frente al tiempo que costó diagnosticar el
+problema sin ella. Esa desproporción es la lección práctica: en un sistema
+distribuido conviene invertir en observabilidad del **desacuerdo entre nodos**,
+no solo del estado de cada nodo, porque el estado propio siempre se ve sano.
 
 ---
 
@@ -542,13 +753,85 @@ al ejecutar la red completa.
    ruido de las mediciones de costo generaba una tormenta de señalización. Solo
    se hizo evidente al ejecutar la red completa, lo que muestra que las pruebas
    unitarias son necesarias pero no suficientes para un sistema distribuido.
+6. En la prueba de interconexión en clase la limitante tampoco fue algorítmica.
+   La matriz consolidada en el pizarrón permitió reconstruir la causa: la fila
+   de nuestro nodo coincide en sus nueve celdas con Dijkstra ejecutado sobre la
+   topología acordada **menos las aristas B–E y C–D**, es decir, sobre un grafo
+   al que le faltaban dos enlaces que sí existían en el mapa. Ambas ausencias
+   tienen un único origen: dos direcciones IP desactualizadas en la tabla
+   registrada en el pizarrón —B anotado en `.149` cuando escuchaba en `.128`, y
+   D en `.106` cuando escuchaba en `.155`—. Una dirección obsoleta impide cerrar
+   el viaje de ida y vuelta del descubrimiento aunque exista conectividad, el
+   enlace nunca sube, y el nodo deja de anunciarlo. Dos entradas mal en una
+   tabla de nueve bastaron para romper la convergencia de toda la red.
+7. La lección de fondo es que un algoritmo de estado de enlace es exactamente
+   tan correcto como su plano de descubrimiento. Una arista que no se puede
+   sondear no existe para el algoritmo, y su ausencia no se manifiesta como un
+   error: se manifiesta como una tabla de enrutamiento internamente consistente,
+   calculada sin fallos, y distinta de la del vecino. Ese es el modo de falla
+   más peligroso de un sistema distribuido, porque no hay nada que depurar en el
+   código —el código está bien— sino un desacuerdo entre nodos que ningún nodo
+   puede observar por sí mismo.
 
 ---
 
 ## 6. Comentarios
 
-_(Espacio para observaciones del grupo sobre la práctica, dificultades
-encontradas y sugerencias.)_
+**Sobre la práctica.** El laboratorio tiene una separación clara entre dos
+dificultades de naturaleza distinta. Implementar los tres algoritmos sobre un
+grafo en memoria es un ejercicio acotado y verificable con pruebas unitarias.
+Operarlos sobre una red real, con nueve implementaciones independientes
+escritas por equipos distintos, es un problema de otra categoría: los defectos
+que aparecieron ahí no fueron errores de Dijkstra ni de flooding, sino
+desacuerdos sobre el formato del sobre, direcciones que dejaron de ser válidas
+y enlaces que existían en el mapa pero no en la red.
+
+**Principales dificultades encontradas.**
+
+1. **Acuerdo tardío sobre el protocolo.** El enunciado entrega un formato base y
+   deja a los grupos cerrar los detalles. Ese cierre ocurrió el mismo día de la
+   prueba, lo que obligó a modificar la capa de serialización con la red ya
+   levantada. Que la traducción id↔dirección estuviera aislada en la frontera de
+   red fue lo que permitió hacer el cambio sin tocar los algoritmos; de haber
+   usado la dirección IP como identificador interno, el cambio habría atravesado
+   todo el proyecto.
+2. **Direcciones IP inestables.** Las direcciones se asignan por DHCP sobre la
+   red inalámbrica del salón. Una renovación de concesión durante la sesión
+   cambia la dirección de un nodo y deja obsoleta la tabla de nombres que los
+   demás grupos ya configuraron, sin que nadie reciba ningún aviso: el síntoma
+   es simplemente un vecino que dejó de responder. La evidencia es directa: el
+   pizarrón registró a nuestro nodo en `.149` y a D en `.106`, cuando las
+   direcciones reales eran `.128` y `.155`. Siete de nueve entradas eran
+   correctas; las dos que no bastaron para romper la convergencia de toda la
+   red. El agravante es que el pizarrón es un registro estático de un dato
+   dinámico: se escribe una vez al inicio y nadie se entera cuando deja de ser
+   cierto.
+3. **Los enlaces que nunca subieron** (sección 3.7). Fue la dificultad de mayor
+   impacto y la más difícil de diagnosticar. Durante la prueba el síntoma era
+   que todo el tráfico salía por C, lo que naturalmente hizo sospechar de C; el
+   análisis posterior de la matriz del pizarrón mostró lo contrario: C era el
+   único enlace que funcionaba. Diagnosticar hacia atrás desde una tabla de
+   enrutamiento resultó mucho más informativo que observar el comportamiento en
+   vivo, porque la tabla es el residuo exacto del grafo que el nodo creía tener.
+4. **Ausencia de un observador global.** Cada grupo solo ve su propia tabla. Sin
+   una vista consolidada es imposible distinguir "mi nodo está mal" de "el
+   vecino no levantó". La consolidación manual en el pizarrón (Figura 3) suplió
+   esa carencia, pero solo después de terminada la prueba.
+
+**Sugerencias.**
+
+- Fijar y publicar el protocolo por escrito con al menos una sesión de
+  anticipación, junto con un paquete de ejemplo válido contra el cual cada grupo
+  pueda validar su decodificador antes de llegar a clase.
+- Asignar direcciones IP estáticas, o reservar la concesión DHCP por dirección
+  MAC, para eliminar la clase completa de fallas descrita en el punto 2.
+- Dedicar los primeros minutos de la prueba a una verificación de conectividad
+  por pares (`nc <ip> 5000` hacia cada vecino) antes de levantar los nodos. Una
+  arista que no pasa esa prueba no va a aparecer en ninguna topología, y
+  detectarlo en ese momento cuesta segundos en vez de toda la sesión.
+- Acordar un comando de consola común y obligatorio —por ejemplo `topology`—
+  para que dos grupos cualesquiera puedan comparar su vista del grafo en el
+  momento y localizar asimetrías sin recurrir a la transcripción manual.
 
 ---
 
