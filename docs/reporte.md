@@ -1,7 +1,7 @@
 # Laboratorio 3 — Algoritmos de Enrutamiento
 
-**Universidad del Valle de Guatemala**
-**CC3067 — Redes**
+**Universidad del Valle de Guatemala**\
+**CC3067 — Redes**\
 **Fecha de entrega:** 3 de septiembre de 2026
 
 **Integrantes del grupo:**
@@ -10,7 +10,7 @@
 | --- | --- |
 | _Iris Ayala_ | _23965_ |
 | _Jonatan Díaz_ | _23837_ |
-| _Luis Padilla_ | _2366_ |
+| _Luis Padilla_ | _23663_ |
 | _Anggie Quezada_ | _23643_ |
 
 **Repositorio:** _https://github.com/Jonialen/cc3067-lab3-routing_
